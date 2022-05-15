@@ -1,0 +1,4 @@
+include:
+- project: 'devtools/cicdscripts'
+  ref: v4.14
+  file: '/main-pipeline.yml'
