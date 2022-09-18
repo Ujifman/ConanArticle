@@ -4,8 +4,6 @@
 
 **Title**: Как мы навели порядок в C++/Qt проекте с помощью Conan
 
-==Сразу оговорюсь, что цель статьи - рассказать, о том как нам удалось выстроить достаточно стабильный flow работы.== перефразировать
-
 ## Пару слов о проекте
 
 ### Максимально коротко
@@ -161,36 +159,141 @@ app_client --> lib_users & gui_prim & lib_db & templates
 ### Инкапсуляция логики сборки
 
 Вся логика сборки под разные платформы инкаспулирована в общий `conanfile.py`, который также является Conan пакетом и инклюдится в либы.
-Также мы в него уложили логику прокатки unit тестов, сбора покрытия, изменение логики сборки в зависимости от того является ли библиотека header only, статической, динамической или app.
 
-==TODO что вошло в conanfile общий, список крупно==
-== mermaid схему наследования в Conanfile==
+CommonConanFile инкапсулирует
 
-Посмотреть на наш conafile можно по ссылке ==link==.
+- логику подмены каналов при разруливании графа зависимостей (`ConanFile.requirements`, `ConanFile.build_requirements`)
+- возможные `ConanFile.settings` и `Conanfile.options`
+- логику укладки исходников в пакет
+- логику подкладки переиспользуемых `.pri` файлов
+- логику компиляции (`ConanFile.build()`)
+- логику прокатки unit тестов и сбора coverage report
+- логику упаковки пакета (`ConanFile.package()`) а также информации по нему (`ConanFile.package_info()`)
 
+Посмотреть на наш conafile можно по [ссылке](github) ==link==.
 
+#### Диаграмма классвов CommonConanFile
 
-Пример рецепта для библиотеки:
+- `AbstractConanFile` - базовый ConanFile, являющийся родителем для всех остальных и реализующий логику упаковки пакета и разрауливания зависимостей, то что нужно всем пакетам
+- `HeaderOnlyConanFile` - ConanFile для header-only пакетов, которым не нужен build
+- `QmakePriOnlyConanFile` - ConanFile для пакетов, которые подкладывают переиспользуемые `.pri` файлы, для переиспользования кода qmake pro файлов
+- `BuildableConanFile` - базовая реализация компилируемого пакета
+- `StaticLibConanFile` - пакет, собирающийся в статическую либу
+- `DynamicLibConanFile` - пакет, собирающийся в динамическую либо
+- `ApplicationConanFile` - пакет, собирающийся в приложение
+
+```mermaid
+classDiagram
+
+class ConanFile {
+    +requirements()
+    +build_requirements()
+    +package()
+    +config_options()
+    +deploy()
+}
+
+class AbstractConanFile {
+    <<abstract>>
+    -license | override
+
+    -requirements_substitution()
+    +requirements() | override
+    +build_requirements() | override
+    +package() | override
+    +package_info() | override
+}
+
+class HeaderOnlyConanFile {
+    +no_copy_source = True
+}
+
+class QmakePriOnlyConanFile {
+    +no_copy_source = True
+}
+
+class BuildableType {
+    <<enumeration>>
+    shared
+    static
+    app
+}
+
+class BuildableConanFile {
+    <<abstract>>
+    +settings | override
+    +options | override
+    +buildable_type
+    -coverage()
+    +config_options() | override
+    +imports() | override
+    +build() | override
+    +package_info() | override
+}
+
+class StaticLibConanFile {
+    +buildable_type = static
+}
+
+class DynamicLibConanFile {
+    +buildable_type = shared
+    +deploy() | override
+}
+
+class ApplicationConanFile {
+    +buildable_type = app
+}
+
+ConanFile <|-- AbstractConanFile
+AbstractConanFile <|-- HeaderOnlyConanFile
+AbstractConanFile <|-- QmakePriOnlyConanFile
+AbstractConanFile <|-- BuildableConanFile
+BuildableConanFile <|-- StaticLibConanFile
+BuildableConanFile <|-- DynamicLibConanFile
+BuildableConanFile <|-- ApplicationConanFile
+BuildableConanFile --> BuildableType: buildable_type
+```
+
+Используемые `conanfile.settings`:
+
+```yaml
+os: Linux, Windows
+compiler: gcc
+build_type: Debug, Release
+arch: x86, x86_64
+```
+
+Используемые `conanfile.options`:
+
+```yaml
+shared: True, False
+qt_ver: 5.5.1, 5.9.8, 5.13.2, 5.15.2, None
+unit_testing: True, False
+with_coverage: True, False
+sample: True, False
+```
+
+### Пример рецепта для библиотеки
 
 ```python
 from conans import ConanFile, CMake, tools
 import os
 
 
-class AixmDbLegacyConan(ConanFile):
-    name = "AixmDbLegacy"
+class DbInterfaceConan(ConanFile):
+    name = "DbInterface"
     version = "2.58.1"
-    url = "https://git.monitorsoft.ru/cpp-libs/AixmDb"
+    url = "https://git.monitorsoft.ru/cpp-libs/DbInterface"
     generators = "qmake"
     python_requires = "CommonConanFile/0.8@monsoft/stable"
     python_requires_extend = "CommonConanFile.DynamicLibConanFile"
-    exports_sources = "src/*", "test_unit/*", "AixmDbLegacy.pro", "AixmDbLegacy_TestUnit.pro"
+    exports_sources = "src/*", "test_unit/*", "DbInterface.pro", "DbInterface_TestUnit.pro"
     run_tests_headless = False
     unit_test_executables = [
-        os.sep.join([".", "test_package", "DbPrimitives", "AixmDbLegacy_Test_DbPrimitives"]),
-        os.sep.join([".", "test_package", "GmlHandler", "AixmDbLegacy_Test_GmlHandler"]),
-        os.sep.join([".", "test_package", "AixmDb", "AixmDbLegacy_Test_AixmDb"]),
-        os.sep.join([".", "test_package", "Integrational", "AixmDbLegacy_Test_Integrational"])
+        os.sep.join([".", "test_package", "DbPrimitives", "DbInterface_Test_DbPrimitives"]),
+        os.sep.join([".", "test_package", "GmlHandler", "DbInterface_Test_GmlHandler"]),
+        os.sep.join([".", "test_package", "AixmDb", "DbInterface_Test_AixmDb"]),
+        os.sep.join([".", "test_package", "Integrational", "DbInterface_Test_Integrational"])
     ]
 
     build_requires = (
@@ -207,10 +310,14 @@ class AixmDbLegacyConan(ConanFile):
 ### Управление пространствами dev/prod
 
 Идентификация пакета Conan выглядит так `Lib/[~2.24.0]@monsoft/stable`.
+
 `<Имя пакета>/<Версия semver>@<user>/<channel>`
+
 Все наши пакеты (которые используют общий рецепт `CommonConanFile`) из ветки `dev` собираются в канал `dev`, а из ветки `master` в канал `stable`.
 
-Таким образом слияние feature-ветки в `dev` приводит к выходу новой `dev` версии, при этом `stable` простарнство не затрагивается. При релизе мы сливаем все либы из `dev` в `master` и получаем обновление `stable` версий пакетов.
+Таким образом слияние feature ветки в `dev` приводит к выходу новой `dev` версии, при этом `stable` простарнство не затрагивается.
+
+При релизе мы сливаем все либы из `dev` в `master` и получаем обновление `stable` версий пакетов.
 
 Самая главная фича тут в подмене канала. Все зависимости прописаны на канал `stable`, но когда мы понимаем, что собираемся в `dev` пространстве, то при выполнении `conan install` выставляем env (`OVERRIDE_CONAN_CHANNEL`), на который реагирует наш рецепт сборки, и он подменяет все пакеты в `requires` и `build_requires` с `monsoft/stable` на `monsoft/dev`. Таким образом мы по всему дереву зависимостей получаем подмену канала.
 
@@ -218,25 +325,136 @@ class AixmDbLegacyConan(ConanFile):
 
 Разработчик прислал ветку на ревью -> ветку слили в `dev` -> прошла сборка на билд сервере  -> новая версия в канале `dev` -> у тестировщика самая свежая версия.
 
+```mermaid
+graph LR
+%% Conan
+conan(Conan)
+
+subgraph Conan stable channel
+conan-s(stable channel)
+conan-s-1.2(v1.2)
+conan-s-1.3(v1.3)
+end
+
+subgraph Conan dev channel
+conan-d(dev channel)
+conan-d-1.2(v1.2)
+conan-d-1.2.1(v1.2.1)
+conan-d-1.2.3(v1.2.3)
+conan-d-1.2.4(v1.2.4)
+conan-d-1.3(v1.3 Alias)
+end
+
+conan --> conan-s & conan-d
+conan-d --> conan-d-1.2 --> conan-d-1.2.1 --> conan-d-1.2.3 --> conan-d-1.2.4 --> conan-d-1.3
+conan-s --> conan-s-1.2 -----> conan-s-1.3
+
+%% Git
+git(Git)
+
+subgraph Git master branch
+git-m(master branch)
+git-m-1.2(v1.2)
+git-m-1.3(v1.3)
+end
+
+subgraph Git dev branch
+git-d(dev branch)
+git-d-1.2(v1.2)
+git-d-1.2.1(v1.2.1)
+git-d-1.2.3(v1.2.3)
+git-d-1.2.4(v1.2.4)
+end
+
+git --> git-d & git-m
+git-d --> git-d-1.2 --> git-d-1.2.1 --> git-d-1.2.3 --> git-d-1.2.4 -- merge --> git-m-1.3
+git-m --> git-m-1.2 -----> git-m-1.3
+```
+
 ### Отладка сквозных багов: editable пакеты
 
-==описать editable==
+Периодически бывает так, что реализация фичи может растянуться на несколько пакетов, или же баг какой-то внутренней зависимости всплывает в верхнем паете.
+
+В таком случае приходится после каждого изменения в используемой библиотеке делать `conan create`, что совсем не упрощает жизнь, а в данном случае даже увеличивает время разработки.
+Для этого случая придумали [Conan Editable Mode](https://docs.conan.io/en/latest/developing_packages/editable_packages.html).
+
+Фича еще пока не супер удобная, но весьма неплохо решает проблему разработки сразу на несколько библиотек.
+
+Краткий принцип работы:
+
+1. Настраиваем Сonan layout файл.
+1. Идем в используемую либу.
+1. Открываем в QtCreator и выставляем у нее сборку в папку с либой.
+1. Выполняем `conan editable add`.
+1. Теперь идем в использующий ее проект и выполняем в нем `conan install`.
+1. Вуаля, теперь вместо кеша Conan берет бинарник, который создает Qt.
+1. Открываем оба проекта в IDE, правим код и дебажим сразу в нескольких либах.
+1. После окончания работы выполняем `conan editable remove`
 
 ### Дружба с IDE
 
-==выложить в репу qtCreator и описать==
+Запуск Conan возможен напрямую из IDE Qt Creator с помощью модуля External Tools в Qt Creator.
+
+Выглядит это примерно так:
+
+![2022-09-18-16-58-32.png](README.assets/2022-09-18-16-58-32.png)
+
+Скрипты для интеграции через External Tools можно посмотреть ==[тут]()==.
+
+Что делают скрипты:
+
+- Из выбранного профиля в QtCreator берут:
+    - версию qt
+    - версию компилятора
+    - тип сборки Release/Debug
+    - пути для исходников и бинарей
+- Используя вышеперечисленное формируют и выполняют команду `conan install`
 
 ### Примеры CI/CD
 
-![2022-05-15-15-33-19.png](README.assets/2022-05-15-15-33-19.png)
+`.gitlab-ci.yml` у всех одинаковый и выглядит вот так:
+
+```yml
+include:
+- project: 'devtools/cicdscripts'
+  ref: v4.1
+  file: '/full-lib-pipeline.yml'
+```
+
+CI/CD скрипты мы также храним в отдельном репозитории, что упрощает их модификацю. Но это уже совсем другая история, которая потянет на отделную статью
+
+Пайплайн выглядит так:
+
+![2022-09-18-17-03-10.png](README.assets/2022-09-18-17-03-10.png)
 
 ## Итоговый flow
 
-==может сюда итог подвести==
+- Цикл разработки
+    - Разработчики независимо друг от друга пилят фичи в feature-ветках библиотек
+    - Присылают реквесты на слияние в dev каждый по своей библиотеке
+    - Тимлид проводит CodeReview и просто тыкает Merge
+    - Либы собираются и попадают в dev канал
+    - Тестироващик делает `conan install` из dev и ему подъезжают все свежие изменения
+    - В случае багов цикл повторяется
+- Цикл разработки независимо для каждого разработчика начинается заново
+- Мы подходим к релизу
+- Все Merge Request*ы* по feature веткам повисают, пока тестировщики заканчивают тестирование по уже влитым фичам и разработчики добивают баги
+- Все допилено
+- Тимлид скриптом сливает все библиотеки в master
+- Запускается пересборка на GitLab CI/CD в цикле
+    Зависимые библиотек не смогут собраться пока не соберуться зависимости. При этом первой джобой в CI/CD скрипте идет проверка графа Conan, поэтому на проверку, что зависимости собрались тратится 4-5 секунд.
+
+    Пересобираться будут только те пакеты, в которых есть изменения или у которых в зависимостях есть пакеты, в которых изменилась сигнатура классов и методов(это разруливается с помощью semver)
+
+- Часа через 4 проверяем мастер проект, к этому времени уже все зависимости собрались, он тоже должен был собраться.
+- Если еще не собрался, возможно где-то есть несогласованность, тогда идем и ищем проблему по графу зависимостей
+
+Самая главная плюшка: если мастер проект собрался, значит точно все остальные собрались с нужными версиями ОС, компилятора опциями и т.д.
 
 ## Что получилось в итоге
 
 - Каждая библиотека, приложение лежит в своем репозитории и собирается в Conan пакет и выкладывается на Conan сервер
+- В каждом репозитории идентичная структура папок и файлов, и чтобы работало необходимо во всех репозиториях ее поддерживать одинаковой
 - На Conan сервере есть 2 канала `dev` и `stable`. На `dev` кладутся пакеты собранные из `dev` ветки, на `production` - из `master` ветки
 - У тестировщика всегда есть доступ к самым последним фичам в `dev`, при этом легко может переключиться и получить полное приложение из `stable` канала
 - Легко можно с помощью `editable` отлавливать сквозные баги
@@ -253,11 +471,12 @@ class AixmDbLegacyConan(ConanFile):
 
 Минусы:
 
-- блокировка слияния фич перед релизом ==todo write==
-- перезапуск сборок скриптами
-- дополнительные действия для отладки сковзных багов
-- определенный порог входа для разработчиков
-- басфактор в поддержке
-- высокий порог вхождения
+- Перед релизом (слияние в master) все слияния в dev тормозятся по всем либам, пока тестировщик не проверит уже слитый в dev функционал
+- Необходимость дополнительно поскриптовать, чтобы слияние на релиз выполнять разом по всем репозиториям (но это уже победили, немного Python и GitLab API и все полуавтоматизировано)
+- Дополнительные действия (Conan Editable Mode) для отладки багов, сквозящих через несколько либ
+- Определенный порог входа для разработчиков (решается хорошими доками и инструкциями)
+- Басфактор в поддержке всего этого великолепия (не все хотят или могут погружаться в структуру, поэтому полностью весь механизм только у одного разработчика в голове)
 
-==добавить минусов==
+В конечном итоге плюсы во многом перевешивают минусы.
+
+Желаю вам держать свои проекты в прозрачном порядке!
