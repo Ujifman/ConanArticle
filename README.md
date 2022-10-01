@@ -194,7 +194,7 @@ app_client --> lib_users & gui_prim & lib_db & templates
 
 Схема с официального сайта
 
-![2022-10-01-19-12-43.png](README.assets/2022-10-01-19-12-43.png)
+![2022-10-01-19-12-43.png](README.assets/scheme.png)
 
 ### Инкапсуляция логики сборки
 
